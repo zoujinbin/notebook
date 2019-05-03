@@ -29,14 +29,14 @@ PostgreSQL流复制默认是异步的。在主服务器上提交事务和从服�
 | master | 192.168.137.5 | Ubuntu 16.04 | PG 11.2 | 9984 | /home/postgres/data
 | slave | 192.168.137.6 | Ubuntu 16.04 | PG 11.2 | 9984 | /home/postgres/data
 
-**ps:** master和slave主机都事先安装好PG数据库
+**ps:** master和slave主机都事先安装好PG数据库，且master主机初始化数据库
 
 #### master主机配置
 
 1. 创建replica用户用于进行主从同步复制
 
 ```
-postgres=# create role replica login replication password 'replica';
+postgres=# create user replica replication password 'replica';
 CREATE ROLE
 postgres=# \du
                                    List of roles
@@ -59,7 +59,8 @@ host    replication     replica         192.168.137.0/24        md5
 3. 修改postgresql.conf
 
 ```
-wal_level = hot_standby
+# wal_level可配置为hot_standby或者logical，logical优先级更高
+wal_level = hot_standby # wal_level = logical
 hot_standby = on
 max_wal_senders = 3
 wal_keep_segments = 500
@@ -108,17 +109,11 @@ pg_ctl start
 1. 执行pg_controldata命令
 
 # master主机
-postgres@master:~/data$ pg_controldata 
-pg_control version number:            1100
-Catalog version number:               201809051
-Database system identifier:           6676408201307298606
+postgres@master:~/data$ pg_controldata | grep cluster
 Database cluster state:               in production
 
 # slave主机
-postgres@slave:~/data$ pg_controldata 
-pg_control version number:            1100
-Catalog version number:               201809051
-Database system identifier:           6676408201307298606
+postgres@slave:~/data$ pg_controldata | grep cluster
 Database cluster state:               in archive recovery
 ```
 
@@ -175,39 +170,18 @@ postgres=#
 4. ps -ef | grep postgres
 
 # master主机
-postgres@master:~/data$ ps -ef | grep postgres
-root       1563   1543  0 Apr06 pts/0    00:00:00 su - postgres
-postgres   1564   1563  0 Apr06 pts/0    00:00:00 -su
-root       1593   1580  0 Apr06 pts/1    00:00:00 su - postgres
-postgres   1594   1593  0 Apr06 pts/1    00:00:00 -su
-postgres   3185      1  0 00:00 pts/0    00:00:00 /opt/pg/bin/postgres
-postgres   3186   3185  0 00:00 ?        00:00:00 postgres: logger   
-postgres   3188   3185  0 00:00 ?        00:00:00 postgres: checkpointer  
-postgres   3189   3185  0 00:00 ?        00:00:00 postgres: background writer  
-postgres   3190   3185  0 00:00 ?        00:00:00 postgres: walwriter  
-postgres   3191   3185  0 00:00 ?        00:00:00 postgres: stats collector  
-postgres   3192   3185  0 00:00 ?        00:00:00 postgres: logical replication launcher  
-postgres   3199   3185  0 00:03 ?        00:00:00 postgres: walsender replica 192.168.137.6(59432) streaming 0/23000060
-postgres   3211   1564  0 00:10 pts/0    00:00:00 ps -ef
-postgres   3212   1564  0 00:10 pts/0    00:00:00 grep --color=auto postgres
+postgres@master:~/data$ ps -ef | grep wal
+postgres   2183   2150  0 16:26 ?        00:00:00 postgres: walwriter  
+postgres   2193   2150  0 16:28 ?        00:00:00 postgres: walsender replica 192.168.137.6(40472) streaming 0/2501BB10
+postgres   2240   1837  0 17:42 pts/1    00:00:00 grep --color=auto wal
 postgres@master:~/data$
 
 # slave主机
-postgres@slave:~/data$ ps -ef | grep postgres
-root       1592   1579  0 Apr06 pts/1    00:00:00 su - postgres
-postgres   1593   1592  0 Apr06 pts/1    00:00:00 -su
-root       3340   3326  0 Apr06 pts/3    00:00:00 su - postgres
-postgres   3341   3340  0 Apr06 pts/3    00:00:00 -su
-postgres   3400      1  0 00:03 pts/3    00:00:00 /opt/pg/bin/postgres
-postgres   3401   3400  0 00:03 ?        00:00:00 postgres: logger   
-postgres   3402   3400  0 00:03 ?        00:00:00 postgres: startup   recovering 000000050000000000000023
-postgres   3403   3400  0 00:03 ?        00:00:00 postgres: checkpointer  
-postgres   3404   3400  0 00:03 ?        00:00:00 postgres: background writer  
-postgres   3405   3400  0 00:03 ?        00:00:00 postgres: stats collector  
-postgres   3406   3400  0 00:03 ?        00:00:00 postgres: walreceiver   streaming 0/23000060
-postgres   3418   3341  0 00:11 pts/3    00:00:00 ps -ef
-postgres   3419   3341  0 00:11 pts/3    00:00:00 grep --color=auto postgres
-postgres@slave:~/data$
+postgres@master:~/data$ ps -ef | grep wal
+postgres   2183   2150  0 16:26 ?        00:00:00 postgres: walwriter  
+postgres   2193   2150  0 16:28 ?        00:00:00 postgres: walsender replica 192.168.137.6(40472) streaming 0/2501BB10
+postgres   2240   1837  0 17:42 pts/1    00:00:00 grep --color=auto wal
+postgres@master:~/data$
 ```
 
 `wal sender`则为主库，`wal receiver`为备库
@@ -254,17 +228,18 @@ test=#
 pg_ctl stop
 ```
 
-2. 备库切换为主库
+2. 备库升级为主库
 
 ```
 # slave主机
 pg_ctl promote
 ```
 
-3. 原主库切换成备库
+3. 原主库降级成备库
 
 ```
-主库降级成备库之前先使用pg_rewind同步下数据目录，防止直接启动由于时间线不一致导致的数据不一致问题
+# 主库降级成备库之前先使用pg_rewind同步下数据目录，防止直接启动由于时间线不一致导致的数据不一致问题
+pg_rewind -D /home/postgres/data --source-server="host=192.168.137.6 port=9984 user=postgres" -P
 ```
 
 * 配置recovery.conf

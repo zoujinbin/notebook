@@ -12,7 +12,7 @@ https://jingyan.baidu.com/article/380abd0a1352781d90192cb0.html
 
 ### 简介
 
-基于PG的流复制能实现主备切换，但是需要手工切换。对于一些HA场景来说，需要当主机宕机后，备机自动切换，经查询资料知道pgpool-II可以实现这种需求。本文基于PG流复制基础上 ，以pgpool-II实现主备切换。
+基于PG的流复制能实现主备切换，但是需要手工切换。对于一些HA场景来说，需要当主机宕机后，备机自动切换，经查询资料知道pgpool-II可以实现这种需求。本文基于PG流复制基础上 ，使用pgpool-II实现主备切换。
 
 ### 系统架构
 
@@ -335,7 +335,8 @@ postgres=#
 6.  修复master主机重新加入集群
 
 ```
-主库降级成备库之前先使用pg_rewind同步下数据目录，防止直接启动由于时间线不一致导致的数据不一致问题
+# 主库降级成备库之前先使用pg_rewind同步下数据目录，防止直接启动由于时间线不一致导致的数据不一致问题
+pg_rewind -D /home/postgres/data --source-server="host=192.168.137.6 port=9984 user=postgres" -P
 ```
 
 ```
